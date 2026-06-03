@@ -42,8 +42,17 @@ NC='\033[0m'
 
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # Test helper functions
+skip() {
+    echo -e "\033[1;33mSKIP\033[0m: $1"
+    if [[ -n "${2:-}" ]]; then
+        echo "  Reason: $2"
+    fi
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+}
+
 pass() {
     echo -e "${GREEN}PASS${NC}: $1"
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1235,44 +1244,54 @@ else
     fail "validate-refine-plan-io: missing output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
 fi
 
-READ_ONLY_OUTPUT_DIR="$TEST_FIXTURES_DIR/read-only-output"
-mkdir -p "$READ_ONLY_OUTPUT_DIR"
-chmod 0555 "$READ_ONLY_OUTPUT_DIR"
-run_validator_capture --input "$VALID_PLAN" --output "$READ_ONLY_OUTPUT_DIR/refined.md"
-if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
-    pass "validate-refine-plan-io: non-writable output directory exits 5"
+if [[ "$(id -u)" -eq 0 ]]; then
+    skip "validate-refine-plan-io: non-writable output directory exits 5" "root bypasses filesystem permissions"
+    skip "validate-refine-plan-io: non-writable output directory reports the specific validation error" "root bypasses filesystem permissions"
 else
-    fail "validate-refine-plan-io: non-writable output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
+    READ_ONLY_OUTPUT_DIR="$TEST_FIXTURES_DIR/read-only-output"
+    mkdir -p "$READ_ONLY_OUTPUT_DIR"
+    chmod 0555 "$READ_ONLY_OUTPUT_DIR"
+    run_validator_capture --input "$VALID_PLAN" --output "$READ_ONLY_OUTPUT_DIR/refined.md"
+    if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
+        pass "validate-refine-plan-io: non-writable output directory exits 5"
+    else
+        fail "validate-refine-plan-io: non-writable output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
+    fi
+
+    if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"; then
+        pass "validate-refine-plan-io: non-writable output directory reports the specific validation error"
+    else
+        fail "validate-refine-plan-io: non-writable output directory reports the specific validation error" "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
+    fi
+
+    chmod 0755 "$READ_ONLY_OUTPUT_DIR"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"; then
-    pass "validate-refine-plan-io: non-writable output directory reports the specific validation error"
+if [[ "$(id -u)" -eq 0 ]]; then
+    skip "validate-refine-plan-io: non-writable input directory in in-place mode exits 5" "root bypasses filesystem permissions"
+    skip "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error" "root bypasses filesystem permissions"
 else
-    fail "validate-refine-plan-io: non-writable output directory reports the specific validation error" "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
+    READ_ONLY_INPUT_DIR="$TEST_FIXTURES_DIR/read-only-input"
+    READ_ONLY_INPUT_PLAN="$READ_ONLY_INPUT_DIR/valid-plan.md"
+    READ_ONLY_INPUT_QA_DIR="$TEST_FIXTURES_DIR/read-only-input-qa"
+    mkdir -p "$READ_ONLY_INPUT_DIR"
+    make_valid_annotated_plan "$READ_ONLY_INPUT_PLAN"
+    chmod 0555 "$READ_ONLY_INPUT_DIR"
+    run_validator_capture --input "$READ_ONLY_INPUT_PLAN" --qa-dir "$READ_ONLY_INPUT_QA_DIR"
+    if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
+        pass "validate-refine-plan-io: non-writable input directory in in-place mode exits 5"
+    else
+        fail "validate-refine-plan-io: non-writable input directory in in-place mode exits 5" "5" "$VALIDATOR_EXIT_CODE"
+    fi
+
+    if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"; then
+        pass "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error"
+    else
+        fail "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error" "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
+    fi
+
+    chmod 0755 "$READ_ONLY_INPUT_DIR"
 fi
-
-chmod 0755 "$READ_ONLY_OUTPUT_DIR"
-
-READ_ONLY_INPUT_DIR="$TEST_FIXTURES_DIR/read-only-input"
-READ_ONLY_INPUT_PLAN="$READ_ONLY_INPUT_DIR/valid-plan.md"
-READ_ONLY_INPUT_QA_DIR="$TEST_FIXTURES_DIR/read-only-input-qa"
-mkdir -p "$READ_ONLY_INPUT_DIR"
-make_valid_annotated_plan "$READ_ONLY_INPUT_PLAN"
-chmod 0555 "$READ_ONLY_INPUT_DIR"
-run_validator_capture --input "$READ_ONLY_INPUT_PLAN" --qa-dir "$READ_ONLY_INPUT_QA_DIR"
-if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
-    pass "validate-refine-plan-io: non-writable input directory in in-place mode exits 5"
-else
-    fail "validate-refine-plan-io: non-writable input directory in in-place mode exits 5" "5" "$VALIDATOR_EXIT_CODE"
-fi
-
-if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"; then
-    pass "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error"
-else
-    fail "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error" "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
-fi
-
-chmod 0755 "$READ_ONLY_INPUT_DIR"
 
 REAL_AND_IGNORED_PLAN="$TEST_FIXTURES_DIR/real-and-ignored-sections-plan.md"
 make_plan_with_real_and_ignored_sections "$REAL_AND_IGNORED_PLAN"
