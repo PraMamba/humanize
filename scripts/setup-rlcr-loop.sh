@@ -810,14 +810,50 @@ if [[ "$BASE_BRANCH" == *[:\#\"\'\`]* ]] || [[ "$BASE_BRANCH" =~ $'\n' ]]; then
 fi
 
 # Capture the base commit SHA at loop start time
-# This prevents issues when working on the base branch itself (e.g., main)
-# where the branch ref advances with commits, making diff against itself empty
-BASE_COMMIT=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse "$BASE_BRANCH" 2>/dev/null)
+# Use merge-base to find the true fork point between HEAD and BASE_BRANCH.
+# This produces semantically correct diffs: only the working branch's divergence.
+BASE_COMMIT=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" merge-base HEAD "$BASE_BRANCH" 2>/dev/null || true)
 if [[ -z "$BASE_COMMIT" ]]; then
-    echo "Error: Failed to get commit SHA for base branch: $BASE_BRANCH" >&2
+    echo "Error: No common ancestor between HEAD and base branch: $BASE_BRANCH" >&2
+    echo "  This can happen with orphan branches or unrelated histories" >&2
+    echo "  Use --base-branch to specify a different base branch" >&2
     exit 1
 fi
-echo "Base commit SHA captured: $BASE_COMMIT" >&2
+echo "Base commit SHA (merge-base): $BASE_COMMIT" >&2
+
+# ========================================
+# Diff Size Pre-Check (Warning Only)
+# ========================================
+# Uses compute_review_diff_size helper to avoid pipeline exit-code masking.
+
+SETUP_DIFF_SIZE_WARNING="false"
+SETUP_DIFF_CHARS=0
+SETUP_DIFF_FILES=0
+SETUP_DIFF_COMMITS=0
+
+if ! SETUP_DIFF_CHARS=$(compute_review_diff_size "$PROJECT_ROOT" "$BASE_COMMIT" "$GIT_TIMEOUT"); then
+    echo "WARNING: Failed to compute setup diff size; stop hook will validate again before Codex review." >&2
+    SETUP_DIFF_CHARS=0
+fi
+
+SETUP_DIFF_COMMITS=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-list --count "$BASE_COMMIT"..HEAD 2>/dev/null || echo "0")
+SETUP_DIFF_COMMITS=$(echo "$SETUP_DIFF_COMMITS" | tr -d '[:space:]')
+SETUP_DIFF_FILES=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" diff --no-ext-diff --no-color --name-only "$BASE_COMMIT"..HEAD 2>/dev/null | wc -l || echo "0")
+SETUP_DIFF_FILES=$(echo "$SETUP_DIFF_FILES" | tr -d '[:space:]')
+
+if [[ "$SETUP_DIFF_CHARS" -gt "$DEFAULT_MAX_REVIEW_DIFF_CHARS" ]]; then
+    SETUP_DIFF_SIZE_WARNING="true"
+    echo "" >&2
+    echo "WARNING: Review diff is large ($SETUP_DIFF_CHARS bytes, limit $DEFAULT_MAX_REVIEW_DIFF_CHARS)" >&2
+    echo "  Commits since base: $SETUP_DIFF_COMMITS" >&2
+    echo "  Files changed: $SETUP_DIFF_FILES" >&2
+    echo "  The stop hook will block codex review if the diff exceeds this limit." >&2
+    echo "  Options:" >&2
+    echo "    1. Cancel and restart with --base-branch <closer-branch> for a narrower range" >&2
+    echo "    2. Split the branch into smaller reviewable chunks" >&2
+    echo "    3. Increase max_review_diff_chars in .humanize/config.json" >&2
+    echo "" >&2
+fi
 
 # ========================================
 # Setup State Directory
@@ -907,6 +943,11 @@ bitlesson_allow_empty_none: $BITLESSON_ALLOW_EMPTY_NONE
 mainline_stall_count: 0
 last_mainline_verdict: unknown
 drift_status: normal
+setup_diff_size_warning: $SETUP_DIFF_SIZE_WARNING
+setup_diff_chars: $SETUP_DIFF_CHARS
+setup_diff_files: $SETUP_DIFF_FILES
+setup_diff_commits: $SETUP_DIFF_COMMITS
+max_review_diff_chars: $DEFAULT_MAX_REVIEW_DIFF_CHARS
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ---
 EOF

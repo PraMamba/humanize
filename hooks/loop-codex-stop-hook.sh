@@ -1239,6 +1239,119 @@ run_codex_code_review() {
         review_base_type="commit"
     fi
 
+    # ---- Diff-size gate: validate base and check diff size before any Codex call ----
+
+    # Validate review_base exists as a commit object
+    if ! run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" cat-file -e "${review_base}^{commit}" 2>/dev/null; then
+        local invalid_reason
+        invalid_reason=$(load_and_render_safe "$TEMPLATE_DIR" "block/invalid-review-base.md" \
+            "# Invalid Review Base Commit
+The stored base commit \`${review_base}\` does not exist in this repository.
+Cancel this loop and restart with a valid --base-branch.
+To cancel: \`/humanize:cancel-rlcr-loop\`" \
+            "REVIEW_BASE=$review_base")
+
+        jq -n \
+            --arg reason "$invalid_reason" \
+            --arg msg "Loop: Blocked - Invalid review base commit: ${review_base}" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
+    # Validate review_base is an ancestor of HEAD (semantic correctness)
+    if ! run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" merge-base --is-ancestor "$review_base" HEAD 2>/dev/null; then
+        local invalid_reason
+        invalid_reason=$(load_and_render_safe "$TEMPLATE_DIR" "block/invalid-review-base.md" \
+            "# Invalid Review Base Commit
+The stored base commit \`${review_base}\` exists but is not an ancestor of HEAD.
+This produces a semantically incorrect diff. Cancel and restart.
+To cancel: \`/humanize:cancel-rlcr-loop\`" \
+            "REVIEW_BASE=$review_base")
+
+        jq -n \
+            --arg reason "$invalid_reason" \
+            --arg msg "Loop: Blocked - Base commit is not ancestor of HEAD: ${review_base}" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
+    # Compute diff size using shared helper (avoids pipeline exit-code masking)
+    local diff_chars
+    if ! diff_chars=$(compute_review_diff_size "$PROJECT_ROOT" "$review_base" "$GIT_TIMEOUT"); then
+        local diff_fail_reason
+        diff_fail_reason=$(load_and_render_safe "$TEMPLATE_DIR" "block/invalid-review-base.md" \
+            "# Review Diff Computation Failed
+Failed to compute review diff from \`${review_base}\` to HEAD.
+
+This block is deterministic and will repeat until the repository state, base commit, or git history is corrected. Do not retry without user action.
+
+Cancel this loop and restart with a valid --base-branch, or repair/fetch the missing git history.
+
+To cancel: \`/humanize:cancel-rlcr-loop\`" \
+            "REVIEW_BASE=$review_base")
+
+        jq -n \
+            --arg reason "$diff_fail_reason" \
+            --arg msg "Loop: Blocked - Failed to compute review diff from ${review_base} to HEAD" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
+    local max_diff_chars="${DEFAULT_MAX_REVIEW_DIFF_CHARS:-800000}"
+
+    if [[ "$diff_chars" -gt "$max_diff_chars" ]]; then
+        echo "BLOCKED: Review diff too large ($diff_chars bytes > $max_diff_chars limit)" >&2
+
+        local head_commit
+        head_commit=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
+        local commits_since_base
+        commits_since_base=$(git -C "$PROJECT_ROOT" rev-list --count "${review_base}"..HEAD 2>/dev/null || echo "unknown")
+        local files_changed
+        files_changed=$(git -C "$PROJECT_ROOT" diff --no-ext-diff --no-color --name-only "${review_base}"..HEAD 2>/dev/null | wc -l | tr -d '[:space:]')
+        local display_base_branch="${BASE_BRANCH:-unknown}"
+
+        local size_reason
+        size_reason=$(load_and_render_safe "$TEMPLATE_DIR" "block/review-diff-too-large.md" \
+            "# Review Diff Too Large
+Review diff too large ($diff_chars bytes > $max_diff_chars limit).
+This block is deterministic and will repeat until the review window or configured limit changes.
+Do not retry the same review without user action.
+To cancel: /humanize:cancel-rlcr-loop" \
+            "BASE_COMMIT=$review_base" \
+            "HEAD_COMMIT=$head_commit" \
+            "BASE_BRANCH=$display_base_branch" \
+            "COMMITS_SINCE_BASE=$commits_since_base" \
+            "FILES_CHANGED=$files_changed" \
+            "DIFF_SIZE_CHARS=$diff_chars" \
+            "MAX_REVIEW_DIFF_CHARS=$max_diff_chars")
+
+        jq -n \
+            --arg reason "$size_reason" \
+            --arg msg "Loop: Blocked - Review diff too large (${diff_chars} bytes > ${max_diff_chars} limit)" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
+    echo "Diff size check passed: $diff_chars bytes (limit: $max_diff_chars)" >&2
+
+    # ---- End diff-size gate ----
+
     CODEX_REVIEW_CMD_FILE="$CACHE_DIR/round-${round}-codex-review.cmd"
     CODEX_REVIEW_LOG_FILE="$CACHE_DIR/round-${round}-codex-review.log"
     local prompt_file="$LOOP_DIR/round-${round}-review-prompt.md"

@@ -432,7 +432,7 @@ setup_stophook_test() {
     local round="$1"
     local agent_teams="$2"
     local review_started="${3:-false}"
-    local base_commit="${4:-abc123}"
+    local base_commit="${4:-}"
 
     setup_test_dir
     cd "$TEST_DIR"
@@ -463,12 +463,20 @@ GI_EOF
     git add .gitignore
     git -c commit.gpgsign=false commit -q -m "Add gitignore"
 
+    # Ensure default branch is named main (state.md uses base_branch: main)
+    git branch -m main 2>/dev/null || true
+
     # Create loop directory
     LOOP_DIR="$TEST_DIR/.humanize/rlcr/2024-01-01_12-00-00"
     mkdir -p "$LOOP_DIR"
 
     local current_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    # Default to real HEAD commit so diff-size gate validation passes
+    if [[ -z "$base_commit" ]]; then
+        base_commit=$(git rev-parse HEAD)
+    fi
 
     cat > "$LOOP_DIR/state.md" << STATE_EOF
 ---

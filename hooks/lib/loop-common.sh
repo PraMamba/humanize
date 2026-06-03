@@ -233,7 +233,45 @@ DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-${_cfg_codex_effort:-high}}"
 # Precedence: pre-set by caller (e.g. --agent-teams flag) > config value > hardcoded fallback (false)
 _cfg_agent_teams="$(get_config_value "$_LOOP_COMMON_CONFIG" "agent_teams" 2>/dev/null || true)"
 DEFAULT_AGENT_TEAMS="${DEFAULT_AGENT_TEAMS:-${_cfg_agent_teams:-false}}"
-unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams
+
+# Load max_review_diff_chars from merged config (controls diff-size gate for reviews)
+# Precedence: pre-set by caller > config value > hardcoded fallback (800000)
+_cfg_max_review_diff_chars="$(get_config_value "$_LOOP_COMMON_CONFIG" "max_review_diff_chars" 2>/dev/null || true)"
+if [[ -n "$_cfg_max_review_diff_chars" && ! "$_cfg_max_review_diff_chars" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Warning: Invalid max_review_diff_chars in merged config: $_cfg_max_review_diff_chars" >&2
+    echo "  Must be a positive integer (> 0)" >&2
+    echo "  Ignoring configured max_review_diff_chars; using default 800000" >&2
+    _cfg_max_review_diff_chars=""
+fi
+DEFAULT_MAX_REVIEW_DIFF_CHARS="${DEFAULT_MAX_REVIEW_DIFF_CHARS:-${_cfg_max_review_diff_chars:-800000}}"
+unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams _cfg_max_review_diff_chars
+
+# Compute the byte size of the diff between a base commit and HEAD.
+# Uses a temp file to avoid pipeline exit-code masking.
+# Returns: prints the byte count to stdout; returns 0 on success, 1 on failure.
+# Usage: size=$(compute_review_diff_size "$project_root" "$base_sha" "$timeout") || handle_failure
+compute_review_diff_size() {
+    local project_root="$1"
+    local base_sha="$2"
+    local timeout="${3:-120}"
+
+    local tmp
+    tmp=$(mktemp) || return 1
+
+    local diff_exit=0
+    run_with_timeout "$timeout" \
+        git -C "$project_root" diff --no-ext-diff --no-color "${base_sha}"..HEAD \
+        > "$tmp" 2>/dev/null || diff_exit=$?
+
+    if [[ "$diff_exit" -ne 0 ]]; then
+        rm -f "$tmp"
+        return 1
+    fi
+
+    wc -c < "$tmp" | tr -d '[:space:]'
+    rm -f "$tmp"
+    return 0
+}
 
 unset _LOOP_COMMON_PROJECT_ROOT _LOOP_COMMON_CONFIG
 
