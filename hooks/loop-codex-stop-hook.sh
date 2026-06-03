@@ -1172,10 +1172,19 @@ mkdir -p "$CACHE_DIR"
 CODEX_DISABLE_HOOKS_ARGS=()
 _CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
-    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+    _CACHED_CODEX_HOOKS_FEATURE="$(cat "$_CODEX_FEATURE_CACHE")"
+    if [[ "$_CACHED_CODEX_HOOKS_FEATURE" == "hooks" || "$_CACHED_CODEX_HOOKS_FEATURE" == "codex_hooks" ]]; then
+        CODEX_DISABLE_HOOKS_ARGS=(--disable "$_CACHED_CODEX_HOOKS_FEATURE")
+    fi
 elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    _CODEX_HOOKS_FEATURE="hooks"
+    _CODEX_FEATURE_LIST="$(codex features list 2>/dev/null || true)"
+    if echo "$_CODEX_FEATURE_LIST" | grep -qE '^codex_hooks[[:space:]]' \
+        && ! echo "$_CODEX_FEATURE_LIST" | grep -qE '^hooks[[:space:]]'; then
+        _CODEX_HOOKS_FEATURE="codex_hooks"
+    fi
+    CODEX_DISABLE_HOOKS_ARGS=(--disable "$_CODEX_HOOKS_FEATURE")
+    echo "$_CODEX_HOOKS_FEATURE" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 else
     echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 fi
