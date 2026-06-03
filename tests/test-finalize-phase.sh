@@ -180,6 +180,8 @@ setup_test_repo() {
         git add init.txt
         git -c commit.gpgsign=false commit -q -m "Initial"
 
+        git branch -m main 2>/dev/null || true
+
         # Create a plan file
         mkdir -p plans
         cat > plans/test-plan.md << 'EOF'
@@ -215,6 +217,9 @@ setup_loop_dir() {
     local current_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD)
 
+    local base_commit
+    base_commit=$(git rev-parse HEAD)
+
     cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: $round
@@ -227,6 +232,7 @@ plan_file: plans/test-plan.md
 plan_tracked: false
 start_branch: $current_branch
 base_branch: main
+base_commit: $base_commit
 review_started: false
 mainline_stall_count: 0
 last_mainline_verdict: unknown

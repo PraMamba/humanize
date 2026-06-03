@@ -223,7 +223,9 @@ echo "plans/" >> .gitignore
 git add .gitignore
 git -c commit.gpgsign=false commit -q -m "Gitignore"
 # Make the plans directory unreadable (if we have permission to do so)
-if chmod 000 plans 2>/dev/null; then
+if [[ "$(id -u)" -eq 0 ]]; then
+    skip "Path resolution error" "root bypasses filesystem permissions"
+elif chmod 000 plans 2>/dev/null; then
     set +e
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/plan.md" 2>&1)
     EXIT_CODE=$?
