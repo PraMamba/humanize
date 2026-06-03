@@ -76,6 +76,8 @@ Agent definitions in `agents/` are used by the plugin as subagents:
 - All content (code, comments, tests, docs) must be in English. No emoji or CJK characters.
 - Version format is strict `X.Y.Z` (no suffixes like `-alpha`, no dates). When bumping version, update all three locations: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and the `README.md` "Current Version" line.
 - `commands/gen-plan.md` (Phase 5 Plan Structure) and `prompt-template/plan/gen-plan-template.md` must stay in sync. Changes to one must be reflected in the other.
+- The directions.json schema v1 is defined in two places that must stay in sync: the jq validation expression in `scripts/validate-directions-json.sh` and the schema documentation in `commands/gen-idea.md` (Step 4.5). When adding, removing, or renaming a field in either place, update the other.
+- Worker constraints (hard caps, isolation rules, no-push rule, sentinel format) are documented in four places that must stay in sync: `commands/explore-idea.md` (coordinator phases), `prompt-template/explore/worker-prompt.md` (worker instructions), `scripts/validate-explore-idea-io.sh` (cap enforcement), and `docs/usage.md` (user-facing option docs). Any change to a cap value or constraint must be reflected in all four.
 - Shell scripts use `#!/usr/bin/env bash`, `set -euo pipefail`, uppercase globals, lowercase locals, hyphenated filenames.
 - Tests go in `tests/test-*.sh`; robustness tests in `tests/robustness/test-*-robustness.sh`.
 
