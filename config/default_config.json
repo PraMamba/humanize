@@ -4,5 +4,6 @@
   "bitlesson_model": "haiku",
   "agent_teams": false,
   "alternative_plan_language": "",
-  "gen_plan_mode": "discussion"
+  "gen_plan_mode": "discussion",
+  "max_review_diff_chars": 800000
 }

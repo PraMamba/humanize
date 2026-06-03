@@ -197,4 +197,98 @@ else
         "$val_g + $val_a + $val_b"
 fi
 
+# ========================================
+# Test: max_review_diff_chars default value
+# ========================================
+
+setup_test_dir
+PROJECT_DIR="$TEST_DIR/max-diff-default"
+mkdir -p "$PROJECT_DIR"
+
+merged=$(XDG_CONFIG_HOME="$TEST_DIR/no-user-config-maxdiff" load_merged_config "$PROJECT_ROOT" "$PROJECT_DIR" 2>/dev/null)
+
+val=$(get_config_value "$merged" "max_review_diff_chars")
+if [[ "$val" == "800000" ]]; then
+    pass "max_review_diff_chars defaults to 800000"
+else
+    fail "max_review_diff_chars defaults to 800000" "800000" "$val"
+fi
+
+# ========================================
+# Test: max_review_diff_chars project override
+# ========================================
+
+setup_test_dir
+PROJECT_DIR="$TEST_DIR/max-diff-override"
+mkdir -p "$PROJECT_DIR/.humanize"
+printf '{"max_review_diff_chars": 500000}' > "$PROJECT_DIR/.humanize/config.json"
+
+merged=$(XDG_CONFIG_HOME="$TEST_DIR/no-user-config-maxdiff2" load_merged_config "$PROJECT_ROOT" "$PROJECT_DIR" 2>/dev/null)
+
+val=$(get_config_value "$merged" "max_review_diff_chars")
+if [[ "$val" == "500000" ]]; then
+    pass "max_review_diff_chars project override works"
+else
+    fail "max_review_diff_chars project override works" "500000" "$val"
+fi
+
+# ========================================
+# Test: max_review_diff_chars = 0 triggers warning and fallback
+# ========================================
+
+setup_test_dir
+PROJECT_DIR="$TEST_DIR/max-diff-zero"
+mkdir -p "$PROJECT_DIR/.humanize"
+printf '{"max_review_diff_chars": 0}' > "$PROJECT_DIR/.humanize/config.json"
+
+# Source loop-common.sh with the zero-value config and capture stderr
+loader_stderr="$TEST_DIR/loader-zero-stderr.log"
+loaded_val=$(
+    unset _LOOP_COMMON_LOADED DEFAULT_MAX_REVIEW_DIFF_CHARS
+    CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh" 2>"$loader_stderr"
+    echo "$DEFAULT_MAX_REVIEW_DIFF_CHARS"
+)
+
+if [[ "$loaded_val" == "800000" ]]; then
+    pass "max_review_diff_chars=0 falls back to 800000"
+else
+    fail "max_review_diff_chars=0 falls back to 800000" "800000" "$loaded_val"
+fi
+
+if grep -q "Invalid max_review_diff_chars\|Must be a positive integer" "$loader_stderr"; then
+    pass "max_review_diff_chars=0 emits warning"
+else
+    fail "max_review_diff_chars=0 emits warning" "warning in stderr" "not found"
+fi
+
+# ========================================
+# Test: max_review_diff_chars = "abc" triggers warning and fallback
+# ========================================
+
+setup_test_dir
+PROJECT_DIR="$TEST_DIR/max-diff-invalid"
+mkdir -p "$PROJECT_DIR/.humanize"
+printf '{"max_review_diff_chars": "abc"}' > "$PROJECT_DIR/.humanize/config.json"
+
+loader_stderr="$TEST_DIR/loader-abc-stderr.log"
+loaded_val=$(
+    unset _LOOP_COMMON_LOADED DEFAULT_MAX_REVIEW_DIFF_CHARS
+    CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh" 2>"$loader_stderr"
+    echo "$DEFAULT_MAX_REVIEW_DIFF_CHARS"
+)
+
+if [[ "$loaded_val" == "800000" ]]; then
+    pass "max_review_diff_chars='abc' falls back to 800000"
+else
+    fail "max_review_diff_chars='abc' falls back to 800000" "800000" "$loaded_val"
+fi
+
+if grep -q "Invalid max_review_diff_chars\|Must be a positive integer" "$loader_stderr"; then
+    pass "max_review_diff_chars='abc' emits warning"
+else
+    fail "max_review_diff_chars='abc' emits warning" "warning in stderr" "not found"
+fi
+
 print_test_summary "Config Merge Tests"
